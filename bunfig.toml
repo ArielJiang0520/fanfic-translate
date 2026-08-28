@@ -1,0 +1,4 @@
+[test]
+# Sets DB_PATH=:memory: before any server module (and therefore server/db.ts, which opens its
+# Database at import time) is loaded.
+preload = ["./server/__tests__/setup.ts"]

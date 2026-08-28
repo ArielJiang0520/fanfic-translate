@@ -1,0 +1,13 @@
+/.git
+/node_modules
+.dockerignore
+.env
+.env.*
+Dockerfile
+fly.toml
+dist
+*.db
+*.db-*
+.claude
+.vscode
+/docs

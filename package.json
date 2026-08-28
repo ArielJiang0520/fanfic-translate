@@ -1,0 +1,40 @@
+{
+  "name": "fanfic-translate",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev:server": "bun --hot server/index.ts",
+    "dev:client": "bun x --bun vite --host 0.0.0.0",
+    "dev": "bun x concurrently -n server,client -c blue,green \"bun run dev:server\" \"bun run dev:client\"",
+    "build": "bun x --bun vite build",
+    "start": "NODE_ENV=production bun server/index.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit",
+    "db:generate": "bunx drizzle-kit generate",
+    "db:migrate": "bunx drizzle-kit migrate",
+    "db:studio": "bunx drizzle-kit studio"
+  },
+  "devDependencies": {
+    "@flydotio/dockerfile": "^0.7.10",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/bun": "^1.3.13",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^9.2.1",
+    "drizzle-kit": "^0.31.10",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.3",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.2.2"
+  },
+  "peerDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.102.8",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.5"
+  }
+}
