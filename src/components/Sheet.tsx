@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 
-// Every modal in this app is a bottom sheet rather than a centred dialog: on a phone the
-// controls then land under the thumb instead of halfway up the screen.
 export function Sheet({
   open,
   onClose,
@@ -41,7 +39,6 @@ export function Sheet({
   )
 }
 
-// A sheet holding one text field: new chapter, and both renames.
 export function PromptSheet({
   open,
   onClose,
@@ -66,7 +63,6 @@ export function PromptSheet({
   const [value, setValue] = useState(initialValue)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Reopening on a different row has to start from that row's text, not the last one's.
   useEffect(() => {
     if (open) setValue(initialValue)
   }, [open, initialValue])

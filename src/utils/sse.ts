@@ -1,6 +1,3 @@
-// Splits an SSE response body into the raw `data:` payloads, in order. Shared by the server
-// (reading OpenRouter) and the client (reading our own /api/translate stream), which is why it
-// lives under src/ rather than server/.
 export async function* readServerSentEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
   const reader = body.getReader()
   const decoder = new TextDecoder()

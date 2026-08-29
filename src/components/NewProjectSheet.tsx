@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Sheet } from '@/components/Sheet'
 import { LanguagePair } from '@/components/LanguagePair'
 import { FlagIcon } from '@/components/flags'
+import { MAX_INSTRUCTIONS_CHARS } from '@/limits'
 import {
   DEFAULT_SOURCE_LANG,
   DEFAULT_TARGET_LANG,
@@ -16,10 +17,6 @@ const TYPES: { value: ProjectType; label: string; hint: string }[] = [
   { value: 'oneshot', label: 'One-shot', hint: 'A single standalone piece' },
 ]
 
-// A native <select> on purpose: on a phone it is the OS wheel, which beats any list we could
-// build and needs no code to be scrollable under a thumb. Its options are text only — an
-// <option> cannot hold markup — so the flag sits beside the control instead, and the sheet
-// spells the whole pair out underneath.
 function LanguageSelect({
   label,
   value,
@@ -37,7 +34,6 @@ function LanguageSelect({
         <select
           value={value}
           onChange={e => onChange(e.target.value as LanguageCode)}
-          // text-base, not smaller: iOS Safari zooms the page on focus for anything under 16px.
           className="min-w-0 flex-1 bg-transparent py-2 text-base outline-none"
         >
           {LANGUAGES.map(option => (
@@ -51,8 +47,6 @@ function LanguageSelect({
   )
 }
 
-// Creating a project is the one place the type and the languages are decided, so the sheet says
-// plainly that both stick — the server refuses to change either later.
 export function NewProjectSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate()
   const create = useCreateProject()
@@ -60,9 +54,9 @@ export function NewProjectSheet({ open, onClose }: { open: boolean; onClose: () 
   const [type, setType] = useState<ProjectType>('series')
   const [source, setSource] = useState<LanguageCode>(DEFAULT_SOURCE_LANG)
   const [target, setTarget] = useState<LanguageCode>(DEFAULT_TARGET_LANG)
+  const [instructions, setInstructions] = useState('')
   const [error, setError] = useState('')
 
-  // Translating a language into itself is not a thing, and the server says so too.
   const sameLanguage = source === target
 
   useEffect(() => {
@@ -71,6 +65,7 @@ export function NewProjectSheet({ open, onClose }: { open: boolean; onClose: () 
     setType('series')
     setSource(DEFAULT_SOURCE_LANG)
     setTarget(DEFAULT_TARGET_LANG)
+    setInstructions('')
     setError('')
   }, [open])
 
@@ -86,9 +81,9 @@ export function NewProjectSheet({ open, onClose }: { open: boolean; onClose: () 
         type,
         source_lang: source,
         target_lang: target,
+        instructions,
       })
       onClose()
-      // A one-shot lands in its editor; a series lands in its (empty) chapter list.
       navigate(projectHref(project))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not create the project')
@@ -146,7 +141,22 @@ export function NewProjectSheet({ open, onClose }: { open: boolean; onClose: () 
           )}
         </div>
 
-        <p className="text-xs text-neutral-500">The type and the languages cannot be changed later.</p>
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-neutral-600">Instructions (optional)</span>
+          <textarea
+            value={instructions}
+            onChange={e => setInstructions(e.target.value)}
+            rows={3}
+            maxLength={MAX_INSTRUCTIONS_CHARS}
+            placeholder="Steve calls Bucky 巴基, never 巴恩斯. Keep the narration casual."
+            className="resize-none rounded-md border border-neutral-300 px-3 py-2 text-base leading-relaxed outline-none focus:border-neutral-900"
+          />
+        </label>
+
+        <p className="text-xs text-neutral-500">
+          The type and the languages cannot be changed later. The instructions can — they are only
+          ever read by the next translation.
+        </p>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 

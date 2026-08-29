@@ -2,7 +2,6 @@ const MINUTE = 60_000
 const HOUR = 60 * MINUTE
 const DAY = 24 * HOUR
 
-// Short enough to sit on a list row without wrapping on a narrow phone.
 export function relativeTime(ms: number): string {
   const diff = Date.now() - ms
   if (diff < MINUTE) return 'just now'

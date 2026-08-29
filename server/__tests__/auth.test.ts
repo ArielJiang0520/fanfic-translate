@@ -15,34 +15,26 @@ describe('POST /api/auth/signup', () => {
 
     const row = db.select().from(users).where(eq(users.username, username)).get()
     expect(row?.id).toBe(body.id)
-    // Stored hashed, never in the clear.
     expect(row?.password_hash).not.toContain(TEST_PASSWORD)
 
     expect(sidFrom(res)).toBeTruthy()
     expect(res.headers.get('set-cookie')).toContain('HttpOnly')
   })
 
-  test('rejects missing fields', async () => {
-    const { status, body } = await call('POST', '/api/auth/signup', { body: { username: uniqueUsername() } })
-    expect(status).toBe(400)
-    expect(body.error).toBe('Missing fields')
-  })
-
-  test('rejects a password under 8 characters', async () => {
-    const { status, body } = await call('POST', '/api/auth/signup', {
-      body: { username: uniqueUsername(), password: 'short' },
-    })
-    expect(status).toBe(400)
-    expect(body.error).toContain('8 characters')
-  })
-
-  test('rejects a username already taken', async () => {
+  test('rejects a body it cannot accept', async () => {
     const existing = await signup()
-    const { status, body } = await call('POST', '/api/auth/signup', {
-      body: { username: existing.username, password: TEST_PASSWORD },
-    })
-    expect(status).toBe(409)
-    expect(body.error).toBe('Username already taken')
+    const bad: [Record<string, unknown>, number, string][] = [
+      [{ username: uniqueUsername() }, 400, 'Missing fields'],
+      [{ password: TEST_PASSWORD }, 400, 'Missing fields'],
+      [{ username: uniqueUsername(), password: 'short' }, 400, '8 characters'],
+      [{ username: existing.username, password: TEST_PASSWORD }, 409, 'Username already taken'],
+    ]
+
+    for (const [body, status, error] of bad) {
+      const res = await call('POST', '/api/auth/signup', { body })
+      expect(res.status).toBe(status)
+      expect(res.body.error).toContain(error)
+    }
   })
 })
 
@@ -59,31 +51,26 @@ describe('POST /api/auth/login', () => {
     expect(`sid=${sidFrom(res)}`).not.toBe(agent.cookie)
   })
 
-  test('rejects a wrong password', async () => {
+  test('401s on a wrong password or an unknown username', async () => {
     const agent = await signup()
-    const { status, body } = await call('POST', '/api/auth/login', {
-      body: { username: agent.username, password: 'wrong-password' },
-    })
-    expect(status).toBe(401)
-    expect(body.error).toBe('Invalid credentials')
-  })
+    const bad = [
+      { username: agent.username, password: 'wrong-password' },
+      { username: uniqueUsername('ghost'), password: TEST_PASSWORD },
+    ]
 
-  test('rejects an unknown username', async () => {
-    const { status } = await call('POST', '/api/auth/login', {
-      body: { username: uniqueUsername('ghost'), password: TEST_PASSWORD },
-    })
-    expect(status).toBe(401)
+    for (const body of bad) {
+      const res = await call('POST', '/api/auth/login', { body })
+      expect(res.status).toBe(401)
+      expect(res.body.error).toBe('Invalid credentials')
+    }
   })
 })
 
 describe('POST /api/auth/logout', () => {
-  test('invalidates the session', async () => {
+  test('invalidates the session, and succeeds without one', async () => {
     const agent = await signup()
     expect((await call('POST', '/api/auth/logout', { agent })).status).toBe(204)
     expect((await call('GET', '/api/me', { agent })).status).toBe(401)
-  })
-
-  test('succeeds without a session', async () => {
     expect((await call('POST', '/api/auth/logout')).status).toBe(204)
   })
 })
@@ -96,12 +83,8 @@ describe('GET /api/me', () => {
     expect(body).toEqual({ id: agent.userId, username: agent.username })
   })
 
-  test('401s without a session cookie', async () => {
+  test('401s without a session cookie, and on an unknown session id', async () => {
     expect((await call('GET', '/api/me')).status).toBe(401)
-  })
-
-  test('401s on an unknown session id', async () => {
-    const { status } = await call('GET', '/api/me', { agent: { cookie: 'sid=not-a-real-session' } })
-    expect(status).toBe(401)
+    expect((await call('GET', '/api/me', { agent: { cookie: 'sid=not-a-real-session' } })).status).toBe(401)
   })
 })

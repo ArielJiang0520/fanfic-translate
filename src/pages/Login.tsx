@@ -25,7 +25,6 @@ export default function Login() {
     try {
       if (isSignup) await signup(username, password)
       else await login(username, password)
-      // No navigate: the router shows the app as soon as `user` is set.
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Something went wrong')
     } finally {

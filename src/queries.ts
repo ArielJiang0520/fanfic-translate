@@ -4,12 +4,14 @@ import type { LanguageCode } from '@/languages'
 
 export type ProjectType = 'series' | 'oneshot'
 
-// The pair a project translates between, fixed at creation. Every shape the server sends that
-// names a project carries it, because the editor needs it to label its pane and to say what the
-// translate route should translate between.
 export interface LanguagePair {
   source_lang: LanguageCode
   target_lang: LanguageCode
+}
+
+export interface Entity {
+  source: string
+  target: string
 }
 
 export interface ProjectSummary extends LanguagePair {
@@ -18,8 +20,6 @@ export interface ProjectSummary extends LanguagePair {
   type: ProjectType
   updated_at: number
   chapter_count: number
-  // Set only for a one-shot: the single document it stands for, so the list can link
-  // straight into the editor.
   entry_chapter_id: number | null
 }
 
@@ -36,7 +36,9 @@ export interface ProjectDetail extends LanguagePair {
   title: string
   type: ProjectType
   updated_at: number
+  instructions: string
   chapters: ChapterStub[]
+  entities: Entity[]
 }
 
 export interface Chapter {
@@ -46,7 +48,13 @@ export interface Chapter {
   source_text: string
   translated_text: string
   updated_at: number
-  project: LanguagePair & { id: number; title: string; type: ProjectType }
+  project: LanguagePair & {
+    id: number
+    title: string
+    type: ProjectType
+    instructions: string
+    entities: Entity[]
+  }
 }
 
 export const keys = {
@@ -55,7 +63,6 @@ export const keys = {
   chapter: (id: number) => ['chapter', id] as const,
 }
 
-// Where a project opens. A one-shot is its document, so it skips the chapter list entirely.
 export function projectHref(project: Pick<ProjectSummary, 'id' | 'type' | 'entry_chapter_id'>) {
   if (project.type === 'oneshot' && project.entry_chapter_id !== null) {
     return `/c/${project.entry_chapter_id}`
@@ -63,7 +70,6 @@ export function projectHref(project: Pick<ProjectSummary, 'id' | 'type' | 'entry
   return `/p/${project.id}`
 }
 
-// A blank title is normal; a chapter is then named by where it sits in its series.
 export function chapterName(title: string, index: number) {
   return title.trim() || `Chapter ${index + 1}`
 }
@@ -72,8 +78,6 @@ export function useProjects() {
   return useQuery({ queryKey: keys.projects, queryFn: () => api<ProjectSummary[]>('/projects') })
 }
 
-// `undefined` leaves the query idle, which is how the sidebar defers a series' chapters until
-// somebody actually expands it.
 export function useProject(id: number | undefined) {
   return useQuery({
     queryKey: keys.project(id!),
@@ -93,20 +97,26 @@ export function useChapter(id: number | undefined) {
 export function useCreateProject() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: LanguagePair & { title: string; type: ProjectType }) =>
+    mutationFn: (input: LanguagePair & { title: string; type: ProjectType; instructions?: string }) =>
       api<ProjectSummary>('/projects', { method: 'POST', body: input }),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.projects }),
   })
 }
 
-export function useRenameProject() {
+export function useSaveProject() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { id: number; title: string }) =>
-      api<ProjectDetail>(`/projects/${input.id}`, { method: 'PATCH', body: { title: input.title } }),
+    mutationFn: (input: { id: number; title?: string; instructions?: string }) => {
+      const { id, ...patch } = input
+      return api<Omit<ProjectDetail, 'chapters' | 'entities'>>(`/projects/${id}`, {
+        method: 'PATCH',
+        body: patch,
+      })
+    },
     onSuccess: (_data, input) => {
       qc.invalidateQueries({ queryKey: keys.projects })
       qc.invalidateQueries({ queryKey: keys.project(input.id) })
+      qc.invalidateQueries({ queryKey: ['chapter'] })
     },
   })
 }
@@ -137,7 +147,6 @@ export function useCreateChapter() {
   })
 }
 
-// Save. Only the fields passed are written, so a rename cannot blank out the text.
 export function useSaveChapter() {
   const qc = useQueryClient()
   return useMutation({
@@ -149,6 +158,22 @@ export function useSaveChapter() {
       qc.setQueryData(keys.chapter(chapter.id), chapter)
       qc.invalidateQueries({ queryKey: keys.projects })
       qc.invalidateQueries({ queryKey: keys.project(chapter.project.id) })
+    },
+  })
+}
+
+export function useSaveEntities() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { projectId: number; entities: Entity[] }) =>
+      api<{ entities: Entity[] }>(`/projects/${input.projectId}/entities`, {
+        method: 'PUT',
+        body: { entities: input.entities },
+      }),
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: keys.projects })
+      qc.invalidateQueries({ queryKey: keys.project(input.projectId) })
+      qc.invalidateQueries({ queryKey: ['chapter'] })
     },
   })
 }

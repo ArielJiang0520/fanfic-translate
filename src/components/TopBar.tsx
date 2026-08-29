@@ -3,8 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { ChevronLeftIcon, MenuIcon } from '@/components/icons'
 import { useShell } from '@/components/AppShell'
 
-// 44px is the smallest tap target that reliably works with a thumb, so every bar button is one
-// even though the glyph inside is 20px.
 const tapTarget =
   'flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-neutral-700 active:bg-neutral-100'
 
@@ -15,9 +13,7 @@ export function TopBar({
   right,
 }: {
   title: ReactNode
-  // A node, not a string: the screens that carry a language pair put the <LanguagePair /> here.
   subtitle?: ReactNode
-  // A path to go back to. Without it the bar shows the drawer button instead.
   back?: string
   right?: ReactNode
 }) {

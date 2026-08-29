@@ -1,40 +1,59 @@
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { type Variables, authMiddleware } from '../middleware'
-import { MAX_TEXT_CHARS } from '../limits'
+import { MAX_TEXT_CHARS } from '../../src/limits'
+import { type Entity, readEntities } from '../entities'
+import { readInstructions } from '../instructions'
 import { readServerSentEvents } from '../../src/utils/sse'
 import { isLanguageCode, language } from '../../src/languages'
 
 const translate = new Hono<{ Variables: Variables }>()
 
-// DeepSeek V4 Pro, with no `provider` block at all: that is OpenRouter's auto route, which
-// picks a provider for the model and falls back on its own if the first one fails.
 const MODEL = 'deepseek/deepseek-v4-pro'
 
-// POST rather than GET, so the text travels in a body — which rules out EventSource on the
-// client; it reads the stream off fetch() instead (see src/utils/sse.ts).
+function glossary(entities: Entity[]): string {
+  const pairs = entities.filter(entity => entity.source)
+  const bare = entities.filter(entity => !entity.source)
+
+  const lines: string[] = []
+  if (pairs.length) {
+    lines.push('Render these names and terms exactly as given:')
+    lines.push(...pairs.map(entity => `- ${entity.source} → ${entity.target}`))
+  }
+  if (bare.length) {
+    lines.push(`Use these spellings for names and terms when they come up: ${bare.map(entity => entity.target).join(', ')}`)
+  }
+  return lines.join('\n')
+}
+
 translate.post('/', authMiddleware, async c => {
-  const { text, source_lang, target_lang } = await c.req.json().catch(() => ({}))
+  const { text, source_lang, target_lang, entities, instructions } = await c.req.json().catch(() => ({}))
   const input = typeof text === 'string' ? text.trim() : ''
   if (!input) return c.json({ error: 'Text required' }, 400)
   if (input.length > MAX_TEXT_CHARS) {
     return c.json({ error: `Text must be at most ${MAX_TEXT_CHARS} characters` }, 400)
   }
-  // The route stays chapter-blind: the caller says what to translate between, rather than this
-  // handler looking a project up. That is what keeps it a pure text-in, text-out endpoint.
   if (!isLanguageCode(source_lang) || !isLanguageCode(target_lang)) {
     return c.json({ error: 'Unsupported language' }, 400)
   }
+  const read = readEntities(entities ?? [])
+  if ('error' in read) return c.json({ error: read.error }, 400)
 
-  // Still one line, as it should stay — only the two nouns are no longer baked in.
-  const systemPrompt = `Translate the input from ${language(source_lang).name} to ${language(target_lang).name}.`
+  const note = readInstructions(instructions)
+  if ('error' in note) return c.json({ error: note.error }, 400)
+
+  const systemPrompt = [
+    `Translate the input from ${language(source_lang).name} to ${language(target_lang).name}.`,
+    note.instructions && `How the translator wants this rendered:\n${note.instructions}`,
+    glossary(read.entities),
+  ]
+    .filter(Boolean)
+    .join('\n\n')
 
   const apiKey = process.env.OPENROUTER_API_KEY
   if (!apiKey) return c.json({ error: 'OPENROUTER_API_KEY is not set on the server' }, 500)
 
   return streamSSE(c, async stream => {
-    // The client going away (navigating, hitting clear) should stop us paying for tokens
-    // nobody will read, so its disconnect aborts the upstream request.
     const controller = new AbortController()
     const abort = () => controller.abort()
     c.req.raw.signal.addEventListener('abort', abort, { once: true })
@@ -83,14 +102,12 @@ translate.post('/', authMiddleware, async c => {
           const content = parsed?.choices?.[0]?.delta?.content
           if (content) await stream.writeSSE({ data: JSON.stringify({ type: 'chunk', content }) })
         } catch {
-          // OpenRouter interleaves `: OPENROUTER PROCESSING` comments and the odd partial
-          // frame; neither is a delta, so drop anything that will not parse.
+          // OpenRouter interleaves keep-alive comments and partial frames; neither is a delta.
         }
       }
 
       await stream.writeSSE({ data: JSON.stringify({ type: 'done' }) })
     } catch (err) {
-      // An abort is the client's own doing — there is nobody left to tell.
       if (controller.signal.aborted) return
       const message = err instanceof Error ? err.message : 'Unknown error'
       console.error('[translate]', message)

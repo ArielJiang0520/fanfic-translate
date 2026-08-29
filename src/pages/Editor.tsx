@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Navigate, useBlocker, useNavigate, useParams } from 'react-router-dom'
+import { EntitiesSheet } from '@/components/EntitiesSheet'
+import { InstructionsSheet } from '@/components/InstructionsSheet'
 import { LanguagePair } from '@/components/LanguagePair'
 import { ConfirmSheet, PromptSheet, Sheet } from '@/components/Sheet'
 import { TopBar, barButton } from '@/components/TopBar'
@@ -16,7 +18,7 @@ import {
 import { readServerSentEvents } from '@/utils/sse'
 
 type Tab = 'source' | 'translated'
-type Modal = 'none' | 'menu' | 'rename' | 'delete' | 'retranslate'
+type Modal = 'none' | 'menu' | 'entities' | 'instructions' | 'rename' | 'delete' | 'retranslate'
 
 export default function Editor() {
   const { chapterId } = useParams()
@@ -24,7 +26,6 @@ export default function Editor() {
   const navigate = useNavigate()
 
   const { data: chapter, isPending, error: loadError } = useChapter(Number.isInteger(id) ? id : undefined)
-  // Only to number an untitled chapter within its series; a one-shot borrows the project title.
   const siblings = useProject(chapter?.project.type === 'series' ? chapter.project.id : undefined)
 
   const save = useSaveChapter()
@@ -34,23 +35,18 @@ export default function Editor() {
   const [tab, setTab] = useState<Tab>('source')
   const [source, setSource] = useState('')
   const [translated, setTranslated] = useState('')
-  // What the server last confirmed. Anything different from this is unsaved.
   const [baseline, setBaseline] = useState({ source: '', translated: '' })
   const [streaming, setStreaming] = useState(false)
   const [error, setError] = useState('')
   const [modal, setModal] = useState<Modal>('none')
 
-  // Held across renders so Stop can cut a run off mid-stream.
   const abortRef = useRef<AbortController | null>(null)
   const paneRef = useRef<HTMLTextAreaElement>(null)
   const loadedId = useRef<number | null>(null)
-  // Deleting is a deliberate exit; the unsaved-changes guard should not argue about it.
   const bypassGuard = useRef(false)
 
   const dirty = source !== baseline.source || translated !== baseline.translated
 
-  // Seed the editor once per chapter. Keyed on the id rather than the object so a background
-  // refetch cannot overwrite what is being typed.
   useEffect(() => {
     if (!chapter || loadedId.current === chapter.id) return
     loadedId.current = chapter.id
@@ -61,7 +57,6 @@ export default function Editor() {
     setError('')
   }, [chapter])
 
-  // Follow the text as it arrives.
   useEffect(() => {
     if (streaming && tab === 'translated' && paneRef.current) {
       paneRef.current.scrollTop = paneRef.current.scrollHeight
@@ -75,7 +70,6 @@ export default function Editor() {
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
 
-  // There is no autosave, so leaving with unsaved work has to be a deliberate act.
   const blocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
       !bypassGuard.current && dirty && currentLocation.pathname !== nextLocation.pathname,
@@ -83,8 +77,6 @@ export default function Editor() {
 
   async function runTranslate() {
     const text = source.trim()
-    // The project carries the pair, and the translate route has no idea what a chapter is, so
-    // there is nothing to send until the chapter has loaded.
     if (!text || streaming || !chapter) return
 
     abortRef.current?.abort()
@@ -97,8 +89,6 @@ export default function Editor() {
     setTab('translated')
 
     try {
-      // Not the shared `api()` helper: this response is a stream, not JSON, so it has to be
-      // read frame by frame rather than parsed whole.
       const res = await fetch('/api/translate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -108,6 +98,8 @@ export default function Editor() {
           text,
           source_lang: chapter.project.source_lang,
           target_lang: chapter.project.target_lang,
+          entities: chapter.project.entities,
+          instructions: chapter.project.instructions,
         }),
       })
 
@@ -134,7 +126,6 @@ export default function Editor() {
   }
 
   function handleTranslate() {
-    // The pane may hold hand-edits, so replacing it is asked about rather than assumed.
     if (translated.trim()) setModal('retranslate')
     else void runTranslate()
   }
@@ -172,12 +163,9 @@ export default function Editor() {
     }
   }
 
-  // A junk id would otherwise leave the query disabled and the screen loading forever.
   if (!Number.isInteger(id)) return <Navigate to="/" replace />
 
   const isOneshot = chapter?.project.type === 'oneshot'
-  // The pane is named after what it holds. Before the chapter lands there is no project to ask,
-  // so the tab falls back to the generic word for the moment the query is in flight.
   const targetName = chapter ? languageName(chapter.project.target_lang) : 'Translation'
   const index = siblings.data?.chapters.findIndex(c => c.id === chapter?.id) ?? -1
   const heading = !chapter
@@ -272,7 +260,7 @@ export default function Editor() {
                   ? 'Translating…'
                   : 'Nothing translated yet.'
             }
-            // text-base, not smaller: iOS Safari zooms the page on focus for anything under 16px.
+            // Anything under 16px makes iOS Safari zoom the page on focus.
             className="h-full w-full resize-none text-base leading-relaxed outline-none"
           />
         )}
@@ -308,22 +296,44 @@ export default function Editor() {
             onClick={() => setModal('rename')}
             className="min-h-12 rounded-md px-2 text-left text-sm active:bg-neutral-100"
           >
-            {isOneshot ? 'Rename one-shot' : 'Rename chapter'}
+            {isOneshot ? 'Rename project' : 'Rename chapter'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setModal('instructions')}
+            className="min-h-12 rounded-md px-2 text-left text-sm active:bg-neutral-100"
+          >
+            Instructions{chapter?.project.instructions ? ' · set' : ''}
+          </button>
+          <button
+            type="button"
+            onClick={() => setModal('entities')}
+            className="min-h-12 rounded-md px-2 text-left text-sm active:bg-neutral-100"
+          >
+            Entities{chapter?.project.entities.length ? ` · ${chapter.project.entities.length}` : ''}
           </button>
           <button
             type="button"
             onClick={() => setModal('delete')}
             className="min-h-12 rounded-md px-2 text-left text-sm text-red-600 active:bg-neutral-100"
           >
-            {isOneshot ? 'Delete one-shot' : 'Delete chapter'}
+            {isOneshot ? 'Delete project' : 'Delete chapter'}
           </button>
         </div>
       </Sheet>
 
+      <InstructionsSheet
+        open={modal === 'instructions'}
+        onClose={() => setModal('none')}
+        projectId={chapter?.project.id}
+      />
+
+      <EntitiesSheet open={modal === 'entities'} onClose={() => setModal('none')} projectId={chapter?.project.id} />
+
       <PromptSheet
         open={modal === 'rename'}
         onClose={() => setModal('none')}
-        title={isOneshot ? 'Rename one-shot' : 'Rename chapter'}
+        title={isOneshot ? 'Rename project' : 'Rename chapter'}
         label="Title"
         initialValue={chapter?.title ?? ''}
         placeholder={isOneshot ? undefined : 'Leave blank to number it'}
@@ -335,10 +345,10 @@ export default function Editor() {
       <ConfirmSheet
         open={modal === 'delete'}
         onClose={() => setModal('none')}
-        title={isOneshot ? 'Delete one-shot' : 'Delete chapter'}
+        title={isOneshot ? 'Delete project' : 'Delete chapter'}
         message={
           isOneshot
-            ? 'The one-shot and its text will be deleted. This cannot be undone.'
+            ? 'This project and its text will be deleted. This cannot be undone.'
             : 'This chapter, its original and its translation will be deleted. This cannot be undone.'
         }
         confirmLabel="Delete"

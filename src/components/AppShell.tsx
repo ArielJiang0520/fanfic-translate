@@ -14,9 +14,6 @@ export function useShell() {
   return ctx
 }
 
-// The shell owns the viewport: `h-dvh` plus `overflow-hidden`, so screens lay themselves out in
-// the space that is left rather than scrolling the page. dvh (not vh) because the mobile URL bar
-// moves.
 export default function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const { pathname } = useLocation()
@@ -24,7 +21,6 @@ export default function AppShell() {
   const openDrawer = useCallback(() => setDrawerOpen(true), [])
   const closeDrawer = useCallback(() => setDrawerOpen(false), [])
 
-  // Tapping through to a chapter should leave the drawer behind.
   useEffect(() => setDrawerOpen(false), [pathname])
 
   useEffect(() => {
@@ -42,7 +38,6 @@ export default function AppShell() {
         <Outlet />
       </div>
 
-      {/* Kept mounted rather than conditionally rendered, so it can slide instead of appear. */}
       <button
         type="button"
         aria-label="Close menu"

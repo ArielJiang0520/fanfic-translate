@@ -1,8 +1,5 @@
 import { useAuth } from '@/auth'
 
-// The drawer is the account menu and nothing else. It used to mirror the library as a tree, which
-// only duplicated the home screen; New project lives on the Library bar and New chapter on the
-// project screen, so navigation belongs to the screens themselves.
 export function Sidebar() {
   const { user, logout } = useAuth()
 

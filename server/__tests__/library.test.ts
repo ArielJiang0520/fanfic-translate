@@ -1,20 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { eq } from 'drizzle-orm'
-import { chapters, db, projects } from '../db'
+import { chapters, db, entities, projects } from '../db'
 import { type Agent, call, signup } from './helpers'
 
-// The whole suite shares one in-memory database, so every test signs up its own user and
-// scopes its assertions to that user's rows rather than assuming an empty table.
-
-interface ProjectRow {
-  id: number
-  title: string
-  type: string
-  source_lang: string
-  target_lang: string
-  updated_at: number
-  chapter_count: number
-  entry_chapter_id: number | null
+interface Entity {
+  source: string
+  target: string
 }
 
 interface ChapterStub {
@@ -24,17 +15,33 @@ interface ChapterStub {
   has_translation: boolean
 }
 
-// Every project needs a language pair, so the default one stands in wherever a test cares about
-// something else.
+// Every project-shaped response in one type: the list row is the narrowest, the chapter's
+// nested project the widest.
+interface ProjectRow {
+  id: number
+  title: string
+  type: string
+  source_lang: string
+  target_lang: string
+  updated_at: number
+  chapter_count?: number
+  entry_chapter_id?: number | null
+  instructions?: string
+  entities?: Entity[]
+  chapters?: ChapterStub[]
+}
+
+type Attempt = [method: string, path: string, body?: unknown]
+
 async function newProject(
   agent: Agent,
   type: 'series' | 'oneshot',
-  title = `${type} title`,
-  langs: { source_lang: string; target_lang: string } = { source_lang: 'en', target_lang: 'zh-Hans' },
+  opts: { title?: string; source_lang?: string; target_lang?: string; instructions?: string } = {},
 ) {
+  const { title = `${type} title`, source_lang = 'en', target_lang = 'zh-Hans', instructions } = opts
   const { status, body } = await call<ProjectRow>('POST', '/api/projects', {
     agent,
-    body: { title, type, ...langs },
+    body: { title, type, source_lang, target_lang, ...(instructions === undefined ? {} : { instructions }) },
   })
   expect(status).toBe(200)
   return body
@@ -49,84 +56,73 @@ async function newChapter(agent: Agent, projectId: number, title = '') {
   return body
 }
 
+function putEntities(agent: Agent, projectId: number, list: unknown) {
+  return call<{ entities: Entity[]; error: string }>('PUT', `/api/projects/${projectId}/entities`, {
+    agent,
+    body: { entities: list },
+  })
+}
+
+const stored = (projectId: number) => db.select().from(projects).where(eq(projects.id, projectId)).get()!
+const storedChapters = (projectId: number) => db.select().from(chapters).where(eq(chapters.project_id, projectId)).all()
+const storedEntities = (projectId: number) => db.select().from(entities).where(eq(entities.project_id, projectId)).all()
+
 describe('POST /api/projects', () => {
   test('a series starts with no chapters', async () => {
     const agent = await signup()
-    const project = await newProject(agent, 'series', 'Under the Stars')
+    const project = await newProject(agent, 'series', { title: 'Under the Stars' })
 
     expect(project).toMatchObject({ title: 'Under the Stars', type: 'series', chapter_count: 0, entry_chapter_id: null })
-    const rows = db.select().from(chapters).where(eq(chapters.project_id, project.id)).all()
-    expect(rows).toHaveLength(0)
+    expect(storedChapters(project.id)).toHaveLength(0)
   })
 
   test('a one-shot is created with exactly one chapter, ready to open', async () => {
     const agent = await signup()
-    const project = await newProject(agent, 'oneshot', 'Rainy Night')
+    const project = await newProject(agent, 'oneshot', { title: 'Rainy Night' })
 
-    const rows = db.select().from(chapters).where(eq(chapters.project_id, project.id)).all()
+    const rows = storedChapters(project.id)
     expect(rows).toHaveLength(1)
-    expect(rows[0]!.title).toBe('Rainy Night')
-    expect(rows[0]!.position).toBe(0)
-    expect(project.entry_chapter_id).toBe(rows[0]!.id)
-    expect(project.chapter_count).toBe(1)
-  })
-
-  test('rejects a blank title', async () => {
-    const agent = await signup()
-    const { status, body } = await call('POST', '/api/projects', { agent, body: { title: '   ', type: 'series' } })
-    expect(status).toBe(400)
-    expect(body.error).toContain('title')
-  })
-
-  test('rejects a type that is neither a series nor a one-shot', async () => {
-    const agent = await signup()
-    const { status, body } = await call('POST', '/api/projects', { agent, body: { title: 'Nope', type: 'anthology' } })
-    expect(status).toBe(400)
-    expect(body.error).toContain('type')
+    expect(rows[0]!).toMatchObject({ title: 'Rainy Night', position: 0 })
+    expect(project).toMatchObject({ chapter_count: 1, entry_chapter_id: rows[0]!.id })
   })
 
   test('keeps the language pair it was created with', async () => {
     const agent = await signup()
-    const project = await newProject(agent, 'series', 'Seoul Nights', {
-      source_lang: 'ja',
-      target_lang: 'ko',
-    })
+    const project = await newProject(agent, 'series', { source_lang: 'ja', target_lang: 'ko' })
 
     expect(project).toMatchObject({ source_lang: 'ja', target_lang: 'ko' })
-    const row = db.select().from(projects).where(eq(projects.id, project.id)).get()!
-    expect([row.source_lang, row.target_lang]).toEqual(['ja', 'ko'])
+    expect(stored(project.id)).toMatchObject({ source_lang: 'ja', target_lang: 'ko' })
   })
 
-  test('rejects a missing language pair', async () => {
+  test('stores the instructions it was given, and none is the normal case', async () => {
     const agent = await signup()
-    const { status, body } = await call('POST', '/api/projects', { agent, body: { title: 'Nope', type: 'series' } })
-    expect(status).toBe(400)
-    expect(body.error).toContain('language')
+    const noted = await newProject(agent, 'series', { instructions: '  Keep the narration casual.  ' })
+    const plain = await newProject(agent, 'series')
+
+    expect(stored(noted.id).instructions).toBe('Keep the narration casual.')
+    expect(stored(plain.id).instructions).toBe('')
   })
 
-  test('rejects a language it does not support', async () => {
+  test('rejects a body it cannot accept', async () => {
     const agent = await signup()
-    const { status, body } = await call('POST', '/api/projects', {
-      agent,
-      body: { title: 'Nope', type: 'series', source_lang: 'en', target_lang: 'elvish' },
-    })
-    expect(status).toBe(400)
-    expect(body.error).toContain('language')
-  })
+    const ok = { title: 'Fine', type: 'series', source_lang: 'en', target_lang: 'zh-Hans' }
+    const bad: [Record<string, unknown>, string][] = [
+      [{ ...ok, title: '   ' }, 'title'],
+      [{ ...ok, title: 'a'.repeat(201) }, 'title'],
+      [{ ...ok, type: 'anthology' }, 'type'],
+      [{ title: 'Nope', type: 'series' }, 'language'],
+      [{ ...ok, target_lang: 'elvish' }, 'language'],
+      [{ ...ok, source_lang: 'es', target_lang: 'es' }, 'different'],
+      [{ ...ok, instructions: 'a'.repeat(2_001) }, 'Instructions'],
+      [{ ...ok, instructions: 7 }, 'Instructions'],
+      [{ ...ok, instructions: { note: 'hi' } }, 'Instructions'],
+    ]
 
-  test('refuses to translate a language into itself', async () => {
-    const agent = await signup()
-    const { status, body } = await call('POST', '/api/projects', {
-      agent,
-      body: { title: 'Nope', type: 'series', source_lang: 'es', target_lang: 'es' },
-    })
-    expect(status).toBe(400)
-    expect(body.error).toContain('different')
-  })
-
-  test('401s without a session', async () => {
-    const { status } = await call('POST', '/api/projects', { body: { title: 'x', type: 'series' } })
-    expect(status).toBe(401)
+    for (const [body, error] of bad) {
+      const res = await call('POST', '/api/projects', { agent, body })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toContain(error)
+    }
   })
 })
 
@@ -134,15 +130,13 @@ describe('GET /api/projects', () => {
   test('lists only the caller’s own projects, newest activity first', async () => {
     const agent = await signup()
     const stranger = await signup()
-    const first = await newProject(agent, 'series', 'First')
-    const second = await newProject(agent, 'oneshot', 'Second')
-    await newProject(stranger, 'series', 'Not mine')
+    const first = await newProject(agent, 'series')
+    const second = await newProject(agent, 'oneshot')
+    await newProject(stranger, 'series', { title: 'Not mine' })
 
     const { status, body } = await call<ProjectRow[]>('GET', '/api/projects', { agent })
     expect(status).toBe(200)
-
-    const ids = body.map(p => p.id)
-    expect(ids).toEqual([second.id, first.id])
+    expect(body.map(p => p.id)).toEqual([second.id, first.id])
     expect(body.find(p => p.id === second.id)!.entry_chapter_id).not.toBeNull()
     expect(body.find(p => p.id === first.id)!.entry_chapter_id).toBeNull()
   })
@@ -156,10 +150,6 @@ describe('GET /api/projects', () => {
     const { body } = await call<ProjectRow[]>('GET', '/api/projects', { agent })
     expect(body.find(p => p.id === project.id)!.chapter_count).toBe(2)
   })
-
-  test('401s without a session', async () => {
-    expect((await call('GET', '/api/projects')).status).toBe(401)
-  })
 })
 
 describe('GET /api/projects/:id', () => {
@@ -170,22 +160,12 @@ describe('GET /api/projects/:id', () => {
     const two = await newChapter(agent, project.id, 'Two')
     await call('PATCH', `/api/chapters/${two.id}`, { agent, body: { translated_text: '译文' } })
 
-    const { status, body } = await call<{ chapters: ChapterStub[] }>('GET', `/api/projects/${project.id}`, { agent })
+    const { status, body } = await call<ProjectRow>('GET', `/api/projects/${project.id}`, { agent })
     expect(status).toBe(200)
-    expect(body.chapters.map(c => c.id)).toEqual([one.id, two.id])
-    expect(body.chapters[0]!.has_translation).toBe(false)
-    expect(body.chapters[1]!.has_translation).toBe(true)
-    expect(body.chapters[0]).not.toHaveProperty('source_text')
-    expect(body.chapters[0]).not.toHaveProperty('translated_text')
-  })
-
-  test('404s on another user’s project', async () => {
-    const owner = await signup()
-    const stranger = await signup()
-    const project = await newProject(owner, 'series')
-
-    const { status } = await call('GET', `/api/projects/${project.id}`, { agent: stranger })
-    expect(status).toBe(404)
+    expect(body.chapters!.map(c => c.id)).toEqual([one.id, two.id])
+    expect(body.chapters!.map(c => c.has_translation)).toEqual([false, true])
+    expect(body.chapters![0]).not.toHaveProperty('source_text')
+    expect(body.chapters![0]).not.toHaveProperty('translated_text')
   })
 
   test('404s on an id that is not a number', async () => {
@@ -197,84 +177,148 @@ describe('GET /api/projects/:id', () => {
 describe('PATCH /api/projects/:id', () => {
   test('renames a series', async () => {
     const agent = await signup()
-    const project = await newProject(agent, 'series', 'Old')
+    const project = await newProject(agent, 'series', { title: 'Old' })
 
     const { status, body } = await call('PATCH', `/api/projects/${project.id}`, { agent, body: { title: 'New' } })
     expect(status).toBe(200)
     expect(body.title).toBe('New')
-    expect(db.select().from(projects).where(eq(projects.id, project.id)).get()!.title).toBe('New')
+    expect(stored(project.id).title).toBe('New')
   })
 
   test('renaming a one-shot renames its document too', async () => {
     const agent = await signup()
-    const project = await newProject(agent, 'oneshot', 'Old')
+    const project = await newProject(agent, 'oneshot', { title: 'Old' })
 
     await call('PATCH', `/api/projects/${project.id}`, { agent, body: { title: 'New' } })
-    const chapter = db.select().from(chapters).where(eq(chapters.project_id, project.id)).get()!
-    expect(chapter.title).toBe('New')
+    expect(storedChapters(project.id)[0]!.title).toBe('New')
   })
 
-  test('refuses to change the type, and leaves it alone', async () => {
+  test('refuses to change the type or the languages, and leaves them alone', async () => {
     const agent = await signup()
-    const project = await newProject(agent, 'series', 'Keep me a series')
+    const project = await newProject(agent, 'series', { source_lang: 'en', target_lang: 'es' })
+    const refusals: [Record<string, unknown>, string][] = [
+      [{ type: 'oneshot' }, "A project's type cannot be changed"],
+      [{ source_lang: 'ja' }, "A project's languages cannot be changed"],
+      [{ target_lang: 'ko' }, "A project's languages cannot be changed"],
+    ]
 
-    const { status, body } = await call('PATCH', `/api/projects/${project.id}`, {
-      agent,
-      body: { title: 'Keep me a series', type: 'oneshot' },
-    })
-    expect(status).toBe(400)
-    expect(body.error).toBe("A project's type cannot be changed")
-    expect(db.select().from(projects).where(eq(projects.id, project.id)).get()!.type).toBe('series')
-  })
-
-  test('refuses to change either language, and leaves them alone', async () => {
-    const agent = await signup()
-    const project = await newProject(agent, 'series', 'Fixed pair', { source_lang: 'en', target_lang: 'es' })
-
-    for (const patch of [{ source_lang: 'ja' }, { target_lang: 'ko' }]) {
-      const { status, body } = await call('PATCH', `/api/projects/${project.id}`, {
-        agent,
-        body: { title: 'Fixed pair', ...patch },
-      })
-      expect(status).toBe(400)
-      expect(body.error).toBe("A project's languages cannot be changed")
+    for (const [patch, error] of refusals) {
+      const res = await call('PATCH', `/api/projects/${project.id}`, { agent, body: { title: 'Fine', ...patch } })
+      expect(res.status).toBe(400)
+      expect(res.body.error).toBe(error)
     }
 
-    const row = db.select().from(projects).where(eq(projects.id, project.id)).get()!
-    expect([row.source_lang, row.target_lang]).toEqual(['en', 'es'])
+    expect(stored(project.id)).toMatchObject({ type: 'series', source_lang: 'en', target_lang: 'es' })
   })
 
-  test('404s on another user’s project', async () => {
-    const owner = await signup()
-    const stranger = await signup()
-    const project = await newProject(owner, 'series')
+  test('writes only the keys it was given', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'series', { title: 'Keep this name' })
 
-    const { status } = await call('PATCH', `/api/projects/${project.id}`, { agent: stranger, body: { title: 'Mine now' } })
-    expect(status).toBe(404)
-    expect(db.select().from(projects).where(eq(projects.id, project.id)).get()!.title).not.toBe('Mine now')
+    const { status, body } = await call<ProjectRow>('PATCH', `/api/projects/${project.id}`, {
+      agent,
+      body: { instructions: 'Honorifics stay.' },
+    })
+    expect(status).toBe(200)
+    expect(body).toMatchObject({ title: 'Keep this name', instructions: 'Honorifics stay.' })
+
+    await call('PATCH', `/api/projects/${project.id}`, { agent, body: { title: 'Renamed' } })
+    expect(stored(project.id)).toMatchObject({ title: 'Renamed', instructions: 'Honorifics stay.' })
+  })
+
+  test('saving a note on a one-shot does not rename its document', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'oneshot', { title: 'Rainy Night' })
+
+    await call('PATCH', `/api/projects/${project.id}`, { agent, body: { instructions: 'Casual.' } })
+    expect(storedChapters(project.id)[0]!.title).toBe('Rainy Night')
+  })
+
+  test('refuses a bad patch, and writes nothing', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'series', { title: 'Untouched', instructions: 'Original note.' })
+
+    for (const body of [{ instructions: 'a'.repeat(2_001) }, { instructions: 7 }, { title: '  ' }, {}]) {
+      expect((await call('PATCH', `/api/projects/${project.id}`, { agent, body })).status).toBe(400)
+    }
+    expect(stored(project.id)).toMatchObject({ title: 'Untouched', instructions: 'Original note.' })
   })
 })
 
 describe('DELETE /api/projects/:id', () => {
-  test('takes its chapters with it', async () => {
+  test('takes its chapters and its glossary with it', async () => {
     const agent = await signup()
     const project = await newProject(agent, 'series')
     await newChapter(agent, project.id)
-    await newChapter(agent, project.id)
+    await putEntities(agent, project.id, [{ target: '安娜' }])
 
-    const { status } = await call('DELETE', `/api/projects/${project.id}`, { agent })
-    expect(status).toBe(204)
-    expect(db.select().from(chapters).where(eq(chapters.project_id, project.id)).all()).toHaveLength(0)
+    expect((await call('DELETE', `/api/projects/${project.id}`, { agent })).status).toBe(204)
     expect(db.select().from(projects).where(eq(projects.id, project.id)).get()).toBeUndefined()
+    expect(storedChapters(project.id)).toHaveLength(0)
+    expect(storedEntities(project.id)).toHaveLength(0)
+  })
+})
+
+describe('PUT /api/projects/:id/entities', () => {
+  test('saves a glossary and reads it back in order', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'series')
+    const glossary = [
+      { source: 'Hydra', target: '九头蛇' },
+      { source: 'Jason Wood', target: '杰森·伍德' },
+    ]
+
+    const { status, body } = await putEntities(agent, project.id, glossary)
+    expect(status).toBe(200)
+    expect(body.entities).toEqual(glossary)
+
+    const detail = await call<ProjectRow>('GET', `/api/projects/${project.id}`, { agent })
+    expect(detail.body.entities).toEqual(glossary)
+    expect(storedEntities(project.id).map(row => row.position)).toEqual([0, 1])
   })
 
-  test('404s on another user’s project, which survives', async () => {
-    const owner = await signup()
-    const stranger = await signup()
-    const project = await newProject(owner, 'series')
+  test('keeps an entry that names no original, stored as an empty string', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'series')
 
-    expect((await call('DELETE', `/api/projects/${project.id}`, { agent: stranger })).status).toBe(404)
-    expect(db.select().from(projects).where(eq(projects.id, project.id)).get()).toBeDefined()
+    const { body } = await putEntities(agent, project.id, [{ target: '安娜' }])
+    expect(body.entities).toEqual([{ source: '', target: '安娜' }])
+    expect(storedEntities(project.id)[0]!.source).toBe('')
+  })
+
+  test('replaces the list rather than adding to it, and drops rows nobody typed into', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'series')
+    await putEntities(agent, project.id, [{ target: 'A' }, { target: 'B' }, { target: 'C' }])
+
+    const { status, body } = await putEntities(agent, project.id, [
+      { source: '', target: '' },
+      { source: '  ', target: ' 安娜 ' },
+      { source: '', target: '' },
+    ])
+    expect(status).toBe(200)
+    expect(body.entities).toEqual([{ source: '', target: '安娜' }])
+    expect(storedEntities(project.id)).toHaveLength(1)
+  })
+
+  test('refuses a list it cannot accept, and writes nothing', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'series')
+    await putEntities(agent, project.id, [{ source: 'Hydra', target: '九头蛇' }])
+
+    const bad: unknown[] = [
+      [{ source: 'Anna' }],
+      Array.from({ length: 201 }, (_, i) => ({ target: `名${i}` })),
+      [{ target: 'a'.repeat(101) }],
+      '安娜',
+      ['安娜'],
+      [{ target: 7 }],
+    ]
+
+    for (const list of bad) {
+      expect((await putEntities(agent, project.id, list)).status).toBe(400)
+    }
+    expect(storedEntities(project.id)).toHaveLength(1)
   })
 })
 
@@ -282,11 +326,9 @@ describe('POST /api/projects/:id/chapters', () => {
   test('appends after the last chapter', async () => {
     const agent = await signup()
     const project = await newProject(agent, 'series')
-    const one = await newChapter(agent, project.id)
-    const two = await newChapter(agent, project.id)
 
-    expect(one.position).toBe(0)
-    expect(two.position).toBe(1)
+    expect((await newChapter(agent, project.id)).position).toBe(0)
+    expect((await newChapter(agent, project.id)).position).toBe(1)
   })
 
   test('refuses to add a chapter to a one-shot', async () => {
@@ -296,41 +338,7 @@ describe('POST /api/projects/:id/chapters', () => {
     const { status, body } = await call('POST', `/api/projects/${project.id}/chapters`, { agent, body: {} })
     expect(status).toBe(400)
     expect(body.error).toContain('one-shot')
-    expect(db.select().from(chapters).where(eq(chapters.project_id, project.id)).all()).toHaveLength(1)
-  })
-
-  test('404s on another user’s project', async () => {
-    const owner = await signup()
-    const stranger = await signup()
-    const project = await newProject(owner, 'series')
-
-    expect((await call('POST', `/api/projects/${project.id}/chapters`, { agent: stranger, body: {} })).status).toBe(404)
-  })
-})
-
-describe('the language pair reaches the client', () => {
-  // The editor labels its pane and fills in its translate request from these, so every shape
-  // that names a project has to carry them.
-  test('on the list row, the project detail, and the chapter’s project', async () => {
-    const agent = await signup()
-    const project = await newProject(agent, 'series', 'Hanoi', { source_lang: 'vi', target_lang: 'en' })
-    const chapter = await newChapter(agent, project.id)
-    const pair = { source_lang: 'vi', target_lang: 'en' }
-
-    const list = await call<ProjectRow[]>('GET', '/api/projects', { agent })
-    expect(list.body.find(p => p.id === project.id)).toMatchObject(pair)
-
-    const detail = await call<ProjectRow>('GET', `/api/projects/${project.id}`, { agent })
-    expect(detail.body).toMatchObject(pair)
-
-    const read = await call<{ project: ProjectRow }>('GET', `/api/chapters/${chapter.id}`, { agent })
-    expect(read.body.project).toMatchObject(pair)
-
-    const saved = await call<{ project: ProjectRow }>('PATCH', `/api/chapters/${chapter.id}`, {
-      agent,
-      body: { source_text: 'Đêm sâu.' },
-    })
-    expect(saved.body.project).toMatchObject(pair)
+    expect(storedChapters(project.id)).toHaveLength(1)
   })
 })
 
@@ -339,7 +347,7 @@ describe('PATCH /api/chapters/:id', () => {
     const agent = await signup()
     const project = await newProject(agent, 'series')
     const chapter = await newChapter(agent, project.id)
-    const before = db.select().from(projects).where(eq(projects.id, project.id)).get()!.updated_at
+    const before = stored(project.id).updated_at
 
     const { status } = await call('PATCH', `/api/chapters/${chapter.id}`, {
       agent,
@@ -347,15 +355,14 @@ describe('PATCH /api/chapters/:id', () => {
     })
     expect(status).toBe(200)
 
-    const { body } = await call<{ source_text: string; translated_text: string; project: { type: string } }>(
+    const { body } = await call<{ source_text: string; translated_text: string; project: ProjectRow }>(
       'GET',
       `/api/chapters/${chapter.id}`,
       { agent },
     )
-    expect(body.source_text).toBe('Night deepened.')
-    expect(body.translated_text).toBe('夜色渐深。')
+    expect(body).toMatchObject({ source_text: 'Night deepened.', translated_text: '夜色渐深。' })
     expect(body.project.type).toBe('series')
-    expect(db.select().from(projects).where(eq(projects.id, project.id)).get()!.updated_at).toBeGreaterThanOrEqual(before)
+    expect(stored(project.id).updated_at).toBeGreaterThanOrEqual(before)
   })
 
   test('regenerating overwrites the previous translation', async () => {
@@ -373,68 +380,22 @@ describe('PATCH /api/chapters/:id', () => {
     const agent = await signup()
     const project = await newProject(agent, 'series')
     const chapter = await newChapter(agent, project.id)
-    await call('PATCH', `/api/chapters/${chapter.id}`, { agent, body: { source_text: 'kept' } })
 
+    await call('PATCH', `/api/chapters/${chapter.id}`, { agent, body: { source_text: 'kept' } })
     await call('PATCH', `/api/chapters/${chapter.id}`, { agent, body: { title: 'Renamed' } })
 
-    const row = db.select().from(chapters).where(eq(chapters.id, chapter.id)).get()!
-    expect(row.title).toBe('Renamed')
-    expect(row.source_text).toBe('kept')
+    expect(storedChapters(project.id)[0]!).toMatchObject({ title: 'Renamed', source_text: 'kept' })
   })
 
-  test('rejects an original over the translate limit', async () => {
+  test('refuses a bad patch', async () => {
     const agent = await signup()
     const project = await newProject(agent, 'series')
     const chapter = await newChapter(agent, project.id)
 
-    const { status, body } = await call('PATCH', `/api/chapters/${chapter.id}`, {
-      agent,
-      body: { source_text: 'a'.repeat(20_001) },
-    })
-    expect(status).toBe(400)
-    expect(body.error).toContain('at most')
-  })
-
-  test('rejects a body with nothing to save', async () => {
-    const agent = await signup()
-    const project = await newProject(agent, 'series')
-    const chapter = await newChapter(agent, project.id)
-
-    const { status } = await call('PATCH', `/api/chapters/${chapter.id}`, { agent, body: {} })
-    expect(status).toBe(400)
-  })
-
-  test('404s on another user’s chapter, which is left untouched', async () => {
-    const owner = await signup()
-    const stranger = await signup()
-    const project = await newProject(owner, 'series')
-    const chapter = await newChapter(owner, project.id)
-
-    const { status } = await call('PATCH', `/api/chapters/${chapter.id}`, {
-      agent: stranger,
-      body: { source_text: 'overwritten' },
-    })
-    expect(status).toBe(404)
-    expect(db.select().from(chapters).where(eq(chapters.id, chapter.id)).get()!.source_text).toBe('')
-  })
-})
-
-describe('GET /api/chapters/:id', () => {
-  test('404s on another user’s chapter', async () => {
-    const owner = await signup()
-    const stranger = await signup()
-    const project = await newProject(owner, 'series')
-    const chapter = await newChapter(owner, project.id)
-
-    expect((await call('GET', `/api/chapters/${chapter.id}`, { agent: stranger })).status).toBe(404)
-  })
-
-  test('401s without a session', async () => {
-    const agent = await signup()
-    const project = await newProject(agent, 'series')
-    const chapter = await newChapter(agent, project.id)
-
-    expect((await call('GET', `/api/chapters/${chapter.id}`)).status).toBe(401)
+    for (const body of [{ source_text: 'a'.repeat(20_001) }, { source_text: 7 }, { title: 7 }, {}]) {
+      expect((await call('PATCH', `/api/chapters/${chapter.id}`, { agent, body })).status).toBe(400)
+    }
+    expect(storedChapters(project.id)[0]!.source_text).toBe('')
   })
 })
 
@@ -447,8 +408,8 @@ describe('DELETE /api/chapters/:id', () => {
 
     expect((await call('DELETE', `/api/chapters/${one.id}`, { agent })).status).toBe(204)
 
-    const { body } = await call<{ chapters: ChapterStub[] }>('GET', `/api/projects/${project.id}`, { agent })
-    expect(body.chapters.map(c => c.id)).toEqual([two.id])
+    const { body } = await call<ProjectRow>('GET', `/api/projects/${project.id}`, { agent })
+    expect(body.chapters!.map(c => c.id)).toEqual([two.id])
   })
 
   test('refuses to delete a one-shot’s only document', async () => {
@@ -458,16 +419,93 @@ describe('DELETE /api/chapters/:id', () => {
     const { status, body } = await call('DELETE', `/api/chapters/${project.entry_chapter_id}`, { agent })
     expect(status).toBe(400)
     expect(body.error).toContain('one-shot')
-    expect(db.select().from(chapters).where(eq(chapters.project_id, project.id)).all()).toHaveLength(1)
+    expect(storedChapters(project.id)).toHaveLength(1)
   })
+})
 
-  test('404s on another user’s chapter', async () => {
+describe('what each response carries', () => {
+  test('the pair everywhere; the glossary and instructions only where the editor needs them', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'series', {
+      source_lang: 'vi',
+      target_lang: 'en',
+      instructions: 'Keep it casual.',
+    })
+    const chapter = await newChapter(agent, project.id)
+    await putEntities(agent, project.id, [{ source: 'Hydra', target: '九头蛇' }])
+
+    const pair = { source_lang: 'vi', target_lang: 'en' }
+    const full = { ...pair, instructions: 'Keep it casual.', entities: [{ source: 'Hydra', target: '九头蛇' }] }
+
+    const list = await call<ProjectRow[]>('GET', '/api/projects', { agent })
+    const row = list.body.find(p => p.id === project.id)!
+    expect(row).toMatchObject(pair)
+    expect(row).not.toHaveProperty('entities')
+    expect(row).not.toHaveProperty('instructions')
+
+    const detail = await call<ProjectRow>('GET', `/api/projects/${project.id}`, { agent })
+    expect(detail.body).toMatchObject(full)
+
+    const read = await call<{ project: ProjectRow }>('GET', `/api/chapters/${chapter.id}`, { agent })
+    expect(read.body.project).toMatchObject(full)
+
+    const saved = await call<{ project: ProjectRow }>('PATCH', `/api/chapters/${chapter.id}`, {
+      agent,
+      body: { source_text: 'Đêm sâu.' },
+    })
+    expect(saved.body.project).toMatchObject(full)
+  })
+})
+
+describe('ownership', () => {
+  test('another user’s rows are 404, not 403, and survive the attempt', async () => {
     const owner = await signup()
     const stranger = await signup()
-    const project = await newProject(owner, 'series')
+    const project = await newProject(owner, 'series', { title: 'Owned', instructions: 'A note.' })
     const chapter = await newChapter(owner, project.id)
+    await putEntities(owner, project.id, [{ target: '安娜' }])
 
-    expect((await call('DELETE', `/api/chapters/${chapter.id}`, { agent: stranger })).status).toBe(404)
-    expect(db.select().from(chapters).where(eq(chapters.id, chapter.id)).get()).toBeDefined()
+    const attempts: Attempt[] = [
+      ['GET', `/api/projects/${project.id}`],
+      ['PATCH', `/api/projects/${project.id}`, { title: 'Mine now' }],
+      ['DELETE', `/api/projects/${project.id}`],
+      ['PUT', `/api/projects/${project.id}/entities`, { entities: [] }],
+      ['POST', `/api/projects/${project.id}/chapters`, {}],
+      ['GET', `/api/chapters/${chapter.id}`],
+      ['PATCH', `/api/chapters/${chapter.id}`, { source_text: 'overwritten' }],
+      ['DELETE', `/api/chapters/${chapter.id}`],
+    ]
+
+    for (const [method, path, body] of attempts) {
+      expect((await call(method, path, { agent: stranger, body })).status).toBe(404)
+    }
+
+    expect(stored(project.id)).toMatchObject({ title: 'Owned', instructions: 'A note.' })
+    expect(storedEntities(project.id)).toHaveLength(1)
+    expect(storedChapters(project.id)).toHaveLength(1)
+    expect(storedChapters(project.id)[0]!.source_text).toBe('')
+  })
+
+  test('every route 401s without a session', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'series')
+    const chapter = await newChapter(agent, project.id)
+
+    const attempts: Attempt[] = [
+      ['GET', '/api/projects'],
+      ['POST', '/api/projects', { title: 'x', type: 'series', source_lang: 'en', target_lang: 'es' }],
+      ['GET', `/api/projects/${project.id}`],
+      ['PATCH', `/api/projects/${project.id}`, { title: 'x' }],
+      ['DELETE', `/api/projects/${project.id}`],
+      ['PUT', `/api/projects/${project.id}/entities`, { entities: [] }],
+      ['POST', `/api/projects/${project.id}/chapters`, {}],
+      ['GET', `/api/chapters/${chapter.id}`],
+      ['PATCH', `/api/chapters/${chapter.id}`, { title: 'x' }],
+      ['DELETE', `/api/chapters/${chapter.id}`],
+    ]
+
+    for (const [method, path, body] of attempts) {
+      expect((await call(method, path, { body })).status).toBe(401)
+    }
   })
 })

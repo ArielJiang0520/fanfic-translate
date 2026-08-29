@@ -6,8 +6,6 @@ import Library from '@/pages/Library'
 import Login from '@/pages/Login'
 import ProjectScreen from '@/pages/ProjectScreen'
 
-// Every screen waits on the same thing: whether the `sid` cookie resolves to a session. Until
-// /me answers, neither redirect is safe — one of them would be wrong.
 function Pending() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-sm items-center justify-center p-6">
@@ -32,8 +30,6 @@ function LoginRoute() {
 
 const router = createBrowserRouter([
   {
-    // A layout route, so the drawer and the viewport-owning shell survive navigation between
-    // the library, a chapter list and the editor.
     element: (
       <RequireAuth>
         <AppShell />

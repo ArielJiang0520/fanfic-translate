@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { EntitiesSheet } from '@/components/EntitiesSheet'
+import { InstructionsSheet } from '@/components/InstructionsSheet'
 import { LanguagePair } from '@/components/LanguagePair'
 import { ConfirmSheet, PromptSheet, Sheet } from '@/components/Sheet'
 import { TopBar, barButton } from '@/components/TopBar'
 import { MoreIcon, PlusIcon } from '@/components/icons'
-import { chapterName, useCreateChapter, useDeleteProject, useProject, useRenameProject } from '@/queries'
+import { chapterName, useCreateChapter, useDeleteProject, useProject, useSaveProject } from '@/queries'
 
-type Modal = 'none' | 'menu' | 'rename' | 'delete' | 'newChapter'
+type Modal = 'none' | 'menu' | 'entities' | 'instructions' | 'rename' | 'delete' | 'newChapter'
 
 export default function ProjectScreen() {
   const { projectId } = useParams()
@@ -14,15 +16,13 @@ export default function ProjectScreen() {
   const navigate = useNavigate()
   const { data: project, isPending, error } = useProject(Number.isInteger(id) ? id : undefined)
 
-  const rename = useRenameProject()
+  const rename = useSaveProject()
   const remove = useDeleteProject()
   const createChapter = useCreateChapter()
   const [modal, setModal] = useState<Modal>('none')
 
-  // A junk id would otherwise leave the query disabled and the screen loading forever.
   if (!Number.isInteger(id)) return <Navigate to="/" replace />
 
-  // A one-shot has no chapter list to show — it *is* its chapter.
   if (project?.type === 'oneshot' && project.chapters[0]) {
     return <Navigate to={`/c/${project.chapters[0].id}`} replace />
   }
@@ -111,6 +111,20 @@ export default function ProjectScreen() {
           </button>
           <button
             type="button"
+            onClick={() => setModal('instructions')}
+            className="min-h-12 rounded-md px-2 text-left text-sm active:bg-neutral-100"
+          >
+            Instructions{project?.instructions ? ' · set' : ''}
+          </button>
+          <button
+            type="button"
+            onClick={() => setModal('entities')}
+            className="min-h-12 rounded-md px-2 text-left text-sm active:bg-neutral-100"
+          >
+            Entities{project?.entities.length ? ` · ${project.entities.length}` : ''}
+          </button>
+          <button
+            type="button"
             onClick={() => setModal('delete')}
             className="min-h-12 rounded-md px-2 text-left text-sm text-red-600 active:bg-neutral-100"
           >
@@ -120,9 +134,14 @@ export default function ProjectScreen() {
         <p className="mt-2 px-2 text-xs text-neutral-500">
           This is a series translating{' '}
           {project && <LanguagePair source={project.source_lang} target={project.target_lang} labelled />}, and stays
-          that way — a project's type and languages are fixed when it is created.
+          that way — a project's type and languages are fixed when it is created. Its instructions and
+          entities are not: change those and the next translation obeys.
         </p>
       </Sheet>
+
+      <InstructionsSheet open={modal === 'instructions'} onClose={() => setModal('none')} projectId={project?.id} />
+
+      <EntitiesSheet open={modal === 'entities'} onClose={() => setModal('none')} projectId={project?.id} />
 
       <PromptSheet
         open={modal === 'rename'}

@@ -22,7 +22,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // The `sid` cookie is httpOnly, so the only way to know whether we are signed in is to ask.
   useEffect(() => {
     api<User>('/me')
       .then(setUser)

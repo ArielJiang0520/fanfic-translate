@@ -1,4 +1,3 @@
-// Every client call goes through here so auth failures and error shapes are handled once.
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message)

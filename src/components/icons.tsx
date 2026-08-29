@@ -1,5 +1,3 @@
-// Hand-rolled so the app keeps its single dependency-free client bundle; there is no icon
-// library here and five glyphs do not justify one.
 type Props = { className?: string }
 
 const base = 'h-5 w-5'
@@ -49,6 +47,14 @@ export function PlusIcon(props: Props) {
   return (
     <Svg {...props}>
       <path d="M12 5v14M5 12h14" />
+    </Svg>
+  )
+}
+
+export function XIcon(props: Props) {
+  return (
+    <Svg {...props}>
+      <path d="M6 6l12 12M18 6L6 18" />
     </Svg>
   )
 }
