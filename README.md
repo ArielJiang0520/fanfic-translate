@@ -1,11 +1,14 @@
 # fanfic-translate
 
-A personal library of fic being translated into Chinese. Sign in, make a project — a **series**
-with chapters, or a standalone **one-shot** — then open a chapter, paste the original, hit
-Translate to stream the Chinese back, and Save. Both the original and the translation are kept,
-and the translation can be generated again over the top.
+A personal library of fic being translated. Sign in, make a project — a **series**
+with chapters, or a standalone **one-shot** — and pick the pair it translates between, English
+into Spanish or Japanese into Korean or any other two of English, Spanish, Simplified Chinese,
+Korean, Japanese and Vietnamese. That pair is the project's identity and cannot be changed
+afterwards. Then open a chapter, paste the original, hit
+Translate to stream the translation back, and Save. Both the original and the translation are
+kept, and the translation can be generated again over the top.
 
-Built for a phone: one column, a drawer for navigation, and the buttons within thumb reach.
+Built for a phone: one column, a drawer for your account, and the buttons within thumb reach.
 
 Bun + TypeScript + Vite + Hono, SQLite via Drizzle ORM, DeepSeek V4 Pro through OpenRouter,
 deployed to Fly.io.

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { LanguagePair } from '@/components/LanguagePair'
 import { NewProjectSheet } from '@/components/NewProjectSheet'
 import { TopBar, barButton } from '@/components/TopBar'
 import { PlusIcon } from '@/components/icons'
@@ -58,6 +59,8 @@ export default function Library() {
                     {project.type === 'oneshot'
                       ? 'One-shot'
                       : `Series · ${project.chapter_count} ${project.chapter_count === 1 ? 'chapter' : 'chapters'}`}
+                    {' · '}
+                    <LanguagePair source={project.source_lang} target={project.target_lang} />
                     {' · '}
                     {relativeTime(project.updated_at)}
                   </div>

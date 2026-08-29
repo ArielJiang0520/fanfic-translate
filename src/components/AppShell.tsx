@@ -58,7 +58,7 @@ export default function AppShell() {
           drawerOpen ? 'translate-x-0 shadow-xl' : '-translate-x-full'
         }`}
       >
-        <Sidebar onNavigate={closeDrawer} />
+        <Sidebar />
       </aside>
     </ShellContext>
   )

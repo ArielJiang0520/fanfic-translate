@@ -3,6 +3,7 @@ import { streamSSE } from 'hono/streaming'
 import { type Variables, authMiddleware } from '../middleware'
 import { MAX_TEXT_CHARS } from '../limits'
 import { readServerSentEvents } from '../../src/utils/sse'
+import { isLanguageCode, language } from '../../src/languages'
 
 const translate = new Hono<{ Variables: Variables }>()
 
@@ -10,17 +11,23 @@ const translate = new Hono<{ Variables: Variables }>()
 // picks a provider for the model and falls back on its own if the first one fails.
 const MODEL = 'deepseek/deepseek-v4-pro'
 
-const SYSTEM_PROMPT = 'Translate the input to Chinese.'
-
 // POST rather than GET, so the text travels in a body — which rules out EventSource on the
 // client; it reads the stream off fetch() instead (see src/utils/sse.ts).
 translate.post('/', authMiddleware, async c => {
-  const { text } = await c.req.json().catch(() => ({}))
+  const { text, source_lang, target_lang } = await c.req.json().catch(() => ({}))
   const input = typeof text === 'string' ? text.trim() : ''
   if (!input) return c.json({ error: 'Text required' }, 400)
   if (input.length > MAX_TEXT_CHARS) {
     return c.json({ error: `Text must be at most ${MAX_TEXT_CHARS} characters` }, 400)
   }
+  // The route stays chapter-blind: the caller says what to translate between, rather than this
+  // handler looking a project up. That is what keeps it a pure text-in, text-out endpoint.
+  if (!isLanguageCode(source_lang) || !isLanguageCode(target_lang)) {
+    return c.json({ error: 'Unsupported language' }, 400)
+  }
+
+  // Still one line, as it should stay — only the two nouns are no longer baked in.
+  const systemPrompt = `Translate the input from ${language(source_lang).name} to ${language(target_lang).name}.`
 
   const apiKey = process.env.OPENROUTER_API_KEY
   if (!apiKey) return c.json({ error: 'OPENROUTER_API_KEY is not set on the server' }, 500)
@@ -45,7 +52,7 @@ translate.post('/', authMiddleware, async c => {
           stream: true,
           reasoning: { effort: 'none' },
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: systemPrompt },
             { role: 'user', content: input },
           ],
         }),

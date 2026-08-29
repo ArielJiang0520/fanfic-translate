@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { LanguagePair } from '@/components/LanguagePair'
 import { ConfirmSheet, PromptSheet, Sheet } from '@/components/Sheet'
 import { TopBar, barButton } from '@/components/TopBar'
 import { MoreIcon, PlusIcon } from '@/components/icons'
@@ -48,7 +49,14 @@ export default function ProjectScreen() {
     <>
       <TopBar
         title={project?.title ?? '…'}
-        subtitle={project ? `${project.chapters.length} ${project.chapters.length === 1 ? 'chapter' : 'chapters'}` : undefined}
+        subtitle={
+          project ? (
+            <>
+              {project.chapters.length} {project.chapters.length === 1 ? 'chapter' : 'chapters'} ·{' '}
+              <LanguagePair source={project.source_lang} target={project.target_lang} />
+            </>
+          ) : undefined
+        }
         back="/"
         right={
           <button type="button" onClick={() => setModal('menu')} aria-label="Project options" className={barButton}>
@@ -110,7 +118,9 @@ export default function ProjectScreen() {
           </button>
         </div>
         <p className="mt-2 px-2 text-xs text-neutral-500">
-          This is a series, and stays one — a project's type is fixed when it is created.
+          This is a series translating{' '}
+          {project && <LanguagePair source={project.source_lang} target={project.target_lang} labelled />}, and stays
+          that way — a project's type and languages are fixed when it is created.
         </p>
       </Sheet>
 

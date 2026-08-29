@@ -1,6 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Sheet } from '@/components/Sheet'
+import { LanguagePair } from '@/components/LanguagePair'
+import { FlagIcon } from '@/components/flags'
+import {
+  DEFAULT_SOURCE_LANG,
+  DEFAULT_TARGET_LANG,
+  LANGUAGES,
+  type LanguageCode,
+} from '@/languages'
 import { projectHref, useCreateProject, type ProjectType } from '@/queries'
 
 const TYPES: { value: ProjectType; label: string; hint: string }[] = [
@@ -8,30 +16,77 @@ const TYPES: { value: ProjectType; label: string; hint: string }[] = [
   { value: 'oneshot', label: 'One-shot', hint: 'A single standalone piece' },
 ]
 
-// Creating a project is the one place the type is decided, so the sheet says plainly that the
-// choice sticks — the server refuses to change it later.
+// A native <select> on purpose: on a phone it is the OS wheel, which beats any list we could
+// build and needs no code to be scrollable under a thumb. Its options are text only — an
+// <option> cannot hold markup — so the flag sits beside the control instead, and the sheet
+// spells the whole pair out underneath.
+function LanguageSelect({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: LanguageCode
+  onChange: (code: LanguageCode) => void
+}) {
+  return (
+    <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
+      <span className="text-neutral-600">{label}</span>
+      <span className="flex min-h-11 items-center gap-2 rounded-md border border-neutral-300 bg-white px-3 focus-within:border-neutral-900">
+        <FlagIcon code={value} />
+        <select
+          value={value}
+          onChange={e => onChange(e.target.value as LanguageCode)}
+          // text-base, not smaller: iOS Safari zooms the page on focus for anything under 16px.
+          className="min-w-0 flex-1 bg-transparent py-2 text-base outline-none"
+        >
+          {LANGUAGES.map(option => (
+            <option key={option.code} value={option.code}>
+              {option.name}
+            </option>
+          ))}
+        </select>
+      </span>
+    </label>
+  )
+}
+
+// Creating a project is the one place the type and the languages are decided, so the sheet says
+// plainly that both stick — the server refuses to change either later.
 export function NewProjectSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const navigate = useNavigate()
   const create = useCreateProject()
   const [title, setTitle] = useState('')
   const [type, setType] = useState<ProjectType>('series')
+  const [source, setSource] = useState<LanguageCode>(DEFAULT_SOURCE_LANG)
+  const [target, setTarget] = useState<LanguageCode>(DEFAULT_TARGET_LANG)
   const [error, setError] = useState('')
+
+  // Translating a language into itself is not a thing, and the server says so too.
+  const sameLanguage = source === target
 
   useEffect(() => {
     if (!open) return
     setTitle('')
     setType('series')
+    setSource(DEFAULT_SOURCE_LANG)
+    setTarget(DEFAULT_TARGET_LANG)
     setError('')
   }, [open])
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault()
     const name = title.trim()
-    if (!name) return
+    if (!name || sameLanguage) return
 
     setError('')
     try {
-      const project = await create.mutateAsync({ title: name, type })
+      const project = await create.mutateAsync({
+        title: name,
+        type,
+        source_lang: source,
+        target_lang: target,
+      })
       onClose()
       // A one-shot lands in its editor; a series lands in its (empty) chapter list.
       navigate(projectHref(project))
@@ -74,8 +129,24 @@ export function NewProjectSheet({ open, onClose }: { open: boolean; onClose: () 
               </button>
             ))}
           </div>
-          <p className="text-xs text-neutral-500">This cannot be changed later.</p>
         </div>
+
+        <div className="flex flex-col gap-2">
+          <div className="flex items-end gap-2">
+            <LanguageSelect label="From" value={source} onChange={setSource} />
+            <LanguageSelect label="Into" value={target} onChange={setTarget} />
+          </div>
+          {sameLanguage ? (
+            <p className="text-xs text-red-600">Pick two different languages.</p>
+          ) : (
+            <p className="text-xs text-neutral-500">
+              Every chapter here translates{' '}
+              <LanguagePair source={source} target={target} labelled />.
+            </p>
+          )}
+        </div>
+
+        <p className="text-xs text-neutral-500">The type and the languages cannot be changed later.</p>
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 
@@ -89,7 +160,7 @@ export function NewProjectSheet({ open, onClose }: { open: boolean; onClose: () 
           </button>
           <button
             type="submit"
-            disabled={!title.trim() || create.isPending}
+            disabled={!title.trim() || sameLanguage || create.isPending}
             className="min-h-11 flex-1 rounded-md bg-neutral-900 px-4 text-sm font-medium text-white disabled:opacity-50"
           >
             {create.isPending ? '…' : 'Create'}

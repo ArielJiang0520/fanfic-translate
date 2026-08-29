@@ -28,6 +28,15 @@ export const projects = sqliteTable('projects', {
   // 'series' | 'oneshot'. Fixed at creation: the type decides whether the project has children,
   // so changing it later would either orphan chapters or invent one.
   type: text('type').notNull(),
+  // The pair the project translates between, as codes from src/languages.ts. Fixed at creation
+  // too, and for the same kind of reason: every chapter already translated sits in the old
+  // target, so re-pointing a project would silently make its library inconsistent.
+  //
+  // The defaults let SQLite add these columns to a table that already has rows, and they say
+  // something true while they are at it — every project made before this existed was English
+  // into Simplified Chinese. Creation always sends both explicitly.
+  source_lang: text('source_lang').notNull().default('en'),
+  target_lang: text('target_lang').notNull().default('zh-Hans'),
   created_at: integer('created_at').notNull(),
   updated_at: integer('updated_at').notNull(),
 })

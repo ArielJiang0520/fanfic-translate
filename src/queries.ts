@@ -1,9 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api'
+import type { LanguageCode } from '@/languages'
 
 export type ProjectType = 'series' | 'oneshot'
 
-export interface ProjectSummary {
+// The pair a project translates between, fixed at creation. Every shape the server sends that
+// names a project carries it, because the editor needs it to label its pane and to say what the
+// translate route should translate between.
+export interface LanguagePair {
+  source_lang: LanguageCode
+  target_lang: LanguageCode
+}
+
+export interface ProjectSummary extends LanguagePair {
   id: number
   title: string
   type: ProjectType
@@ -22,7 +31,7 @@ export interface ChapterStub {
   updated_at: number
 }
 
-export interface ProjectDetail {
+export interface ProjectDetail extends LanguagePair {
   id: number
   title: string
   type: ProjectType
@@ -37,7 +46,7 @@ export interface Chapter {
   source_text: string
   translated_text: string
   updated_at: number
-  project: { id: number; title: string; type: ProjectType }
+  project: LanguagePair & { id: number; title: string; type: ProjectType }
 }
 
 export const keys = {
@@ -84,7 +93,7 @@ export function useChapter(id: number | undefined) {
 export function useCreateProject() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { title: string; type: ProjectType }) =>
+    mutationFn: (input: LanguagePair & { title: string; type: ProjectType }) =>
       api<ProjectSummary>('/projects', { method: 'POST', body: input }),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.projects }),
   })

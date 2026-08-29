@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Navigate, useBlocker, useNavigate, useParams } from 'react-router-dom'
+import { LanguagePair } from '@/components/LanguagePair'
 import { ConfirmSheet, PromptSheet, Sheet } from '@/components/Sheet'
 import { TopBar, barButton } from '@/components/TopBar'
 import { MoreIcon } from '@/components/icons'
+import { languageName } from '@/languages'
 import {
   chapterName,
   useChapter,
@@ -81,7 +83,9 @@ export default function Editor() {
 
   async function runTranslate() {
     const text = source.trim()
-    if (!text || streaming) return
+    // The project carries the pair, and the translate route has no idea what a chapter is, so
+    // there is nothing to send until the chapter has loaded.
+    if (!text || streaming || !chapter) return
 
     abortRef.current?.abort()
     const controller = new AbortController()
@@ -100,7 +104,11 @@ export default function Editor() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         signal: controller.signal,
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({
+          text,
+          source_lang: chapter.project.source_lang,
+          target_lang: chapter.project.target_lang,
+        }),
       })
 
       if (!res.ok || !res.body) {
@@ -168,6 +176,9 @@ export default function Editor() {
   if (!Number.isInteger(id)) return <Navigate to="/" replace />
 
   const isOneshot = chapter?.project.type === 'oneshot'
+  // The pane is named after what it holds. Before the chapter lands there is no project to ask,
+  // so the tab falls back to the generic word for the moment the query is in flight.
+  const targetName = chapter ? languageName(chapter.project.target_lang) : 'Translation'
   const index = siblings.data?.chapters.findIndex(c => c.id === chapter?.id) ?? -1
   const heading = !chapter
     ? '…'
@@ -199,7 +210,14 @@ export default function Editor() {
             {dirty && <span className="h-2 w-2 shrink-0 rounded-full bg-neutral-900" aria-label="Unsaved changes" />}
           </span>
         }
-        subtitle={isOneshot ? 'One-shot' : chapter?.project.title}
+        subtitle={
+          chapter && (
+            <>
+              {isOneshot ? 'One-shot' : chapter.project.title} ·{' '}
+              <LanguagePair source={chapter.project.source_lang} target={chapter.project.target_lang} />
+            </>
+          )
+        }
         back={backTo}
         right={
           <button
@@ -219,7 +237,7 @@ export default function Editor() {
           {(
             [
               ['source', 'Original'],
-              ['translated', '译文'],
+              ['translated', targetName],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -333,7 +351,7 @@ export default function Editor() {
         open={modal === 'retranslate'}
         onClose={() => setModal('none')}
         title="Replace the translation?"
-        message="The current 译文, including anything you edited by hand, will be thrown away and generated again."
+        message={`The current ${targetName} translation, including anything you edited by hand, will be thrown away and generated again.`}
         confirmLabel="Retranslate"
         onConfirm={() => {
           setModal('none')

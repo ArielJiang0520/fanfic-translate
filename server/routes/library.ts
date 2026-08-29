@@ -4,6 +4,7 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import { chapters, db, projects } from '../db'
 import { type Variables, authMiddleware } from '../middleware'
 import { MAX_TEXT_CHARS } from '../limits'
+import { type LanguageCode, isLanguageCode } from '../../src/languages'
 
 // Owns both /api/projects/* and /api/chapters/*, so it mounts at the root of /api — the same
 // reason routes/auth.ts does. Keeping them together also keeps the two ownership helpers,
@@ -59,6 +60,8 @@ function listProjects(userId: number) {
       id: projects.id,
       title: projects.title,
       type: projects.type,
+      source_lang: projects.source_lang,
+      target_lang: projects.target_lang,
       updated_at: projects.updated_at,
       chapter_count: sql<number>`count(${chapters.id})`,
       entry_chapter_id: sql<number | null>`min(${chapters.id})`,
@@ -86,6 +89,16 @@ library.post('/projects', authMiddleware, async c => {
   }
   const type = body.type as ProjectType
 
+  // The pair is the project's identity, so it is required here and refused everywhere else.
+  if (!isLanguageCode(body.source_lang) || !isLanguageCode(body.target_lang)) {
+    return c.json({ error: 'Pick a language to translate from, and one to translate into' }, 400)
+  }
+  if (body.source_lang === body.target_lang) {
+    return c.json({ error: 'The two languages must be different' }, 400)
+  }
+  const source_lang = body.source_lang as LanguageCode
+  const target_lang = body.target_lang as LanguageCode
+
   const now = Date.now()
   const userId = c.get('userId')
 
@@ -94,7 +107,7 @@ library.post('/projects', authMiddleware, async c => {
   const project = db.transaction(tx => {
     const row = tx
       .insert(projects)
-      .values({ user_id: userId, title, type, created_at: now, updated_at: now })
+      .values({ user_id: userId, title, type, source_lang, target_lang, created_at: now, updated_at: now })
       .returning()
       .get()
 
@@ -117,6 +130,8 @@ library.post('/projects', authMiddleware, async c => {
     id: project.id,
     title: project.title,
     type: project.type,
+    source_lang: project.source_lang,
+    target_lang: project.target_lang,
     updated_at: project.updated_at,
     chapter_count: type === 'oneshot' ? 1 : 0,
     entry_chapter_id: type === 'oneshot' ? (entry?.id ?? null) : null,
@@ -146,6 +161,8 @@ library.get('/projects/:id', authMiddleware, c => {
     id: project.id,
     title: project.title,
     type: project.type,
+    source_lang: project.source_lang,
+    target_lang: project.target_lang,
     updated_at: project.updated_at,
     chapters: rows.map(row => ({ ...row, has_translation: row.has_translation > 0 })),
   })
@@ -160,6 +177,11 @@ library.patch('/projects/:id', authMiddleware, async c => {
   // Refused loudly rather than ignored quietly: the type decides whether the project has
   // chapters at all, so a caller that thinks it changed one has been badly misled.
   if ('type' in body) return c.json({ error: "A project's type cannot be changed" }, 400)
+  // Same for the pair, and for a related reason: chapters already translated sit in the old
+  // target language, so a project that changed its mind would hold a mixed library.
+  if ('source_lang' in body || 'target_lang' in body) {
+    return c.json({ error: "A project's languages cannot be changed" }, 400)
+  }
 
   const title = readTitle(body.title)
   if (!title) return c.json({ error: `Give it a title, at most ${MAX_TITLE_CHARS} characters` }, 400)
@@ -171,7 +193,14 @@ library.patch('/projects/:id', authMiddleware, async c => {
     db.update(chapters).set({ title, updated_at: now }).where(eq(chapters.project_id, project.id)).run()
   }
 
-  return c.json({ id: project.id, title, type: project.type, updated_at: now })
+  return c.json({
+    id: project.id,
+    title,
+    type: project.type,
+    source_lang: project.source_lang,
+    target_lang: project.target_lang,
+    updated_at: now,
+  })
 })
 
 library.delete('/projects/:id', authMiddleware, c => {
@@ -232,7 +261,15 @@ library.get('/chapters/:id', authMiddleware, c => {
     source_text: chapter.source_text,
     translated_text: chapter.translated_text,
     updated_at: chapter.updated_at,
-    project: { id: project.id, title: project.title, type: project.type },
+    // The pair rides along because the editor needs it twice over: to name its second tab, and
+    // to tell the (chapter-blind) translate route what to translate between.
+    project: {
+      id: project.id,
+      title: project.title,
+      type: project.type,
+      source_lang: project.source_lang,
+      target_lang: project.target_lang,
+    },
   })
 })
 
@@ -293,7 +330,13 @@ library.patch('/chapters/:id', authMiddleware, async c => {
     source_text: updated.source_text,
     translated_text: updated.translated_text,
     updated_at: updated.updated_at,
-    project: { id: project.id, title: project.type === 'oneshot' ? updated.title : project.title, type: project.type },
+    project: {
+      id: project.id,
+      title: project.type === 'oneshot' ? updated.title : project.title,
+      type: project.type,
+      source_lang: project.source_lang,
+      target_lang: project.target_lang,
+    },
   })
 })
 

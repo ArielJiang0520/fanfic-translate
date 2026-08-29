@@ -15,7 +15,8 @@ export function TopBar({
   right,
 }: {
   title: ReactNode
-  subtitle?: string
+  // A node, not a string: the screens that carry a language pair put the <LanguagePair /> here.
+  subtitle?: ReactNode
   // A path to go back to. Without it the bar shows the drawer button instead.
   back?: string
   right?: ReactNode

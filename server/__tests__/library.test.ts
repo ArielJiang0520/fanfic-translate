@@ -10,6 +10,8 @@ interface ProjectRow {
   id: number
   title: string
   type: string
+  source_lang: string
+  target_lang: string
   updated_at: number
   chapter_count: number
   entry_chapter_id: number | null
@@ -22,8 +24,18 @@ interface ChapterStub {
   has_translation: boolean
 }
 
-async function newProject(agent: Agent, type: 'series' | 'oneshot', title = `${type} title`) {
-  const { status, body } = await call<ProjectRow>('POST', '/api/projects', { agent, body: { title, type } })
+// Every project needs a language pair, so the default one stands in wherever a test cares about
+// something else.
+async function newProject(
+  agent: Agent,
+  type: 'series' | 'oneshot',
+  title = `${type} title`,
+  langs: { source_lang: string; target_lang: string } = { source_lang: 'en', target_lang: 'zh-Hans' },
+) {
+  const { status, body } = await call<ProjectRow>('POST', '/api/projects', {
+    agent,
+    body: { title, type, ...langs },
+  })
   expect(status).toBe(200)
   return body
 }
@@ -71,6 +83,45 @@ describe('POST /api/projects', () => {
     const { status, body } = await call('POST', '/api/projects', { agent, body: { title: 'Nope', type: 'anthology' } })
     expect(status).toBe(400)
     expect(body.error).toContain('type')
+  })
+
+  test('keeps the language pair it was created with', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'series', 'Seoul Nights', {
+      source_lang: 'ja',
+      target_lang: 'ko',
+    })
+
+    expect(project).toMatchObject({ source_lang: 'ja', target_lang: 'ko' })
+    const row = db.select().from(projects).where(eq(projects.id, project.id)).get()!
+    expect([row.source_lang, row.target_lang]).toEqual(['ja', 'ko'])
+  })
+
+  test('rejects a missing language pair', async () => {
+    const agent = await signup()
+    const { status, body } = await call('POST', '/api/projects', { agent, body: { title: 'Nope', type: 'series' } })
+    expect(status).toBe(400)
+    expect(body.error).toContain('language')
+  })
+
+  test('rejects a language it does not support', async () => {
+    const agent = await signup()
+    const { status, body } = await call('POST', '/api/projects', {
+      agent,
+      body: { title: 'Nope', type: 'series', source_lang: 'en', target_lang: 'elvish' },
+    })
+    expect(status).toBe(400)
+    expect(body.error).toContain('language')
+  })
+
+  test('refuses to translate a language into itself', async () => {
+    const agent = await signup()
+    const { status, body } = await call('POST', '/api/projects', {
+      agent,
+      body: { title: 'Nope', type: 'series', source_lang: 'es', target_lang: 'es' },
+    })
+    expect(status).toBe(400)
+    expect(body.error).toContain('different')
   })
 
   test('401s without a session', async () => {
@@ -176,6 +227,23 @@ describe('PATCH /api/projects/:id', () => {
     expect(db.select().from(projects).where(eq(projects.id, project.id)).get()!.type).toBe('series')
   })
 
+  test('refuses to change either language, and leaves them alone', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'series', 'Fixed pair', { source_lang: 'en', target_lang: 'es' })
+
+    for (const patch of [{ source_lang: 'ja' }, { target_lang: 'ko' }]) {
+      const { status, body } = await call('PATCH', `/api/projects/${project.id}`, {
+        agent,
+        body: { title: 'Fixed pair', ...patch },
+      })
+      expect(status).toBe(400)
+      expect(body.error).toBe("A project's languages cannot be changed")
+    }
+
+    const row = db.select().from(projects).where(eq(projects.id, project.id)).get()!
+    expect([row.source_lang, row.target_lang]).toEqual(['en', 'es'])
+  })
+
   test('404s on another user’s project', async () => {
     const owner = await signup()
     const stranger = await signup()
@@ -237,6 +305,32 @@ describe('POST /api/projects/:id/chapters', () => {
     const project = await newProject(owner, 'series')
 
     expect((await call('POST', `/api/projects/${project.id}/chapters`, { agent: stranger, body: {} })).status).toBe(404)
+  })
+})
+
+describe('the language pair reaches the client', () => {
+  // The editor labels its pane and fills in its translate request from these, so every shape
+  // that names a project has to carry them.
+  test('on the list row, the project detail, and the chapter’s project', async () => {
+    const agent = await signup()
+    const project = await newProject(agent, 'series', 'Hanoi', { source_lang: 'vi', target_lang: 'en' })
+    const chapter = await newChapter(agent, project.id)
+    const pair = { source_lang: 'vi', target_lang: 'en' }
+
+    const list = await call<ProjectRow[]>('GET', '/api/projects', { agent })
+    expect(list.body.find(p => p.id === project.id)).toMatchObject(pair)
+
+    const detail = await call<ProjectRow>('GET', `/api/projects/${project.id}`, { agent })
+    expect(detail.body).toMatchObject(pair)
+
+    const read = await call<{ project: ProjectRow }>('GET', `/api/chapters/${chapter.id}`, { agent })
+    expect(read.body.project).toMatchObject(pair)
+
+    const saved = await call<{ project: ProjectRow }>('PATCH', `/api/chapters/${chapter.id}`, {
+      agent,
+      body: { source_text: 'Đêm sâu.' },
+    })
+    expect(saved.body.project).toMatchObject(pair)
   })
 })
 
