@@ -1,12 +1,20 @@
 # fanfic-translate
 
-Bun + TypeScript + Vite + Hono, SQLite via Drizzle ORM, deployed to Fly.io.
+A personal library of fic being translated into Chinese. Sign in, make a project — a **series**
+with chapters, or a standalone **one-shot** — then open a chapter, paste the original, hit
+Translate to stream the Chinese back, and Save. Both the original and the translation are kept,
+and the translation can be generated again over the top.
+
+Built for a phone: one column, a drawer for navigation, and the buttons within thumb reach.
+
+Bun + TypeScript + Vite + Hono, SQLite via Drizzle ORM, DeepSeek V4 Pro through OpenRouter,
+deployed to Fly.io.
 
 ## Setup
 
 ```bash
 bun install
-cp .env.example .env
+cp .env.example .env   # then put your OpenRouter key in it
 bun run dev
 ```
 
@@ -35,5 +43,8 @@ fly volumes create fanfic_data --region sjc --size 1
 fly deploy
 ```
 
-After that, pushing to `main` deploys through GitHub Actions — set the `FLY_API_TOKEN` repo
-secret (`fly tokens create deploy`).
+The server needs the OpenRouter key in production too:
+
+```bash
+fly secrets set OPENROUTER_API_KEY=...
+```
